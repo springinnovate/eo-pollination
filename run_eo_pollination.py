@@ -23,11 +23,11 @@ LOGGER = logging.getLogger(__name__)
 logging.getLogger('taskgraph').setLevel(logging.INFO)
 
 args = {
-    'eft_raster_path': 'eo_pollination_data/EFT_MODIS_EVI_2014_2019_md5_205d67e911f7f419863eaacde99dee6d.tif',
+    'eft_raster_path': 'eo_pollination_data/EFT_Landsat8_EVI_2014_2019_md5_01e6a147a21d65ca01210884d0c7cd50.tif',
     'guild_table_path': 'eo_pollination_data/guildtable_protobee_take2.csv',
     'farm_vector_path': 'eo_pollination_data/coffee_iCAFE_2012_md5_8f3644b1353587ef9e30fb61c0386f72.gpkg',
     'farm_floral_eft_field': 'eft',
-    'results_suffix': 'MODIS_205d67_guildt2',
+    'results_suffix': 'Landsat_01e6a_guildt2',
     'workspace_dir': 'eo_pollination_data/eo_workspace',
     'n_workers': multiprocessing.cpu_count(),
     'pixel_scale': 1.0
