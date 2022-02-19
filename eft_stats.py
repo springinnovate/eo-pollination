@@ -1,6 +1,6 @@
 """Get raster of EFT types."""
+from datetime import datetime
 import argparse
-import datetime
 import glob
 import logging
 import multiprocessing
@@ -16,19 +16,15 @@ logging.basicConfig(
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
         ' [%(funcName)s:%(lineno)d] %(message)s'))
-logging.getLogger('ecoshard.taskgraph').setLevel(logging.WARN)
+logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
 
 def _mask_by_value(base_raster_path, mask_value, target_raster_path):
     """Mask base by value to target."""
-    def _mask(array, value):
-        result = (array == value)
-        return result
-
     geoprocessing.raster_calculator(
-        [(base_raster_path, 1)], _mask, target_raster_path, gdal.GDT_Byte,
-        None)
+        [(base_raster_path, 1)], lambda a: (a == mask_value),
+        target_raster_path, gdal.GDT_Byte, None)
 
 
 def main():
@@ -43,7 +39,8 @@ def main():
     workspace_dir = '_eft_stats_workspace'
     os.makedirs(workspace_dir, exist_ok=True)
     task_graph = taskgraph.TaskGraph(
-        workspace_dir, multiprocessing.cpu_count(), 10.0)
+        workspace_dir, multiprocessing.cpu_count(), 10.0,
+        parallel_mode='thread')
 
     stats_path = (
         f'eft_stats_{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.csv')
@@ -60,7 +57,7 @@ def main():
     for raster_path, unique_task in raster_stats_list:
         unique_set = unique_task.get()
         local_working_dir = os.path.join(
-            workspace_dir, os.path.basename(os.path.splitext(raster_path)))
+            workspace_dir, os.path.basename(os.path.splitext(raster_path)[0]))
         for unique_value in unique_set:
             # create a mask of that value/raster
             mask_raster_path = os.path.join(
