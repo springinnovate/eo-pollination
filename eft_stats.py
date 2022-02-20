@@ -9,6 +9,7 @@ import os
 from osgeo import gdal
 from ecoshard import geoprocessing
 from ecoshard import taskgraph
+import numpy
 
 gdal.SetCacheMax(2**26)
 logging.basicConfig(
@@ -29,7 +30,14 @@ def _mask_by_value(base_raster_path, mask_value, target_raster_path):
 
 def _make_radius_kernel(n_pixels, target_kernel_path):
     """Create a flat radius kernel at target kernel path."""
-    pass
+    nodata = -1
+    kernel = numpy.arange(0, n_pixels*2)
+    circle_mask = (
+        (kernel[numpy.newaxis, :]-n_pixels)**2+
+        (kernel[:, numpy.newaxis]-n_pixels)**2) < n_pixels**2
+    geoprocessing.numpy_array_to_raster(
+        circle_mask, nodata, (1, -1), (1, 1), None,
+        target_kernel_path)
 
 
 def main():
