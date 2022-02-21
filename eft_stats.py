@@ -71,10 +71,18 @@ def main():
         for raster_path in glob.glob(raster_pattern)]
     kernel_lookup_by_n_pixels = {}
     for raster_path in raster_path_list:
+        # get unique values
+        unique_task = task_graph.add_task(
+            func=geoprocessing.get_unique_values,
+            args=((raster_path, 1),),
+            store_result=True,
+            task_name=f'unique values for {raster_path}')
+
         local_working_dir = os.path.join(
             workspace_dir, os.path.basename(
                 os.path.splitext(raster_path)[0]))
 
+        # build kernel for each search radius
         kernel_path_list = []
         for search_radius in args.search_radius:
             raster_info = geoprocessing.get_raster_info(raster_path)
@@ -100,19 +108,16 @@ def main():
                 kernel_lookup_by_n_pixels[n_pixels] = (
                     kernel_path, kernel_task)
             kernel_path = kernel_lookup_by_n_pixels[n_pixels][0]
-            kernel_path_list.append((search_radius, kernel_path))
+            kernel_path_list.append((search_radius, kernel_path, kernel_task))
 
-        unique_task = task_graph.add_task(
-            func=geoprocessing.get_unique_values,
-            args=((raster_path, 1),),
-            store_result=True,
-            task_name=f'unique values for {raster_path}')
-        raster_stats_list.append((raster_path, unique_task, kernel_path_list))
+        # save relevant information so all kernels and unique tasks can be
+        # scheduled before masking and convolution starts
+        raster_stats_list.append(
+            (raster_path, unique_task, kernel_path_list, local_working_dir))
 
-    for raster_path, unique_task, kernel_path_list in raster_stats_list:
+    for raster_path, unique_task, kernel_path_list, local_working_dir in \
+            raster_stats_list:
         unique_set = unique_task.get()
-        local_working_dir = os.path.join(
-            workspace_dir, os.path.basename(os.path.splitext(raster_path)[0]))
         for unique_value in unique_set:
             # create a mask of that value/raster
             mask_raster_path = os.path.join(
@@ -122,7 +127,24 @@ def main():
                 args=(raster_path, unique_value, mask_raster_path),
                 target_path_list=[mask_raster_path],
                 task_name=f'mask {mask_raster_path}')
+
             # do a convolution on that mask for the distance desired
+            convolution_raster_list = []
+            convolution_task_list = []
+            for search_radius, kernel_path, kernel_task in kernel_path_list:
+                convolution_raster_path = os.path.join(
+                    local_working_dir, f'{os.path.basename(os.path.splitext(mask_raster_path)[0])}_{unique_value}_{search_radius}.tif')
+                convolution_task = task_graph.add_task(
+                    func=geoprocessing.convolve_2d,
+                    args=(mask_raster_path, kernel_path,
+                          convolution_raster_path),
+                    kwargs={'working_dir': local_working_dir},
+                    dependent_task_list=[mask_task, kernel_task],
+                    target_path_list=[convolution_raster_path],
+                    task_name=f'convolve {convolution_raster_path}'
+                    )
+                convolution_task_list.append(convolution_task)
+                convolution_raster_list.append(convolution_raster_path)
             # threshold the convolution so >0 = 1
         # add all thresholds together
 
