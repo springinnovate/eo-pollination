@@ -33,7 +33,7 @@ def _make_radius_kernel(n_pixels, target_kernel_path):
     nodata = -1
     kernel = numpy.arange(0, n_pixels*2)
     circle_mask = (
-        (kernel[numpy.newaxis, :]-n_pixels)**2+
+        (kernel[numpy.newaxis, :]-n_pixels)**2 +
         (kernel[:, numpy.newaxis]-n_pixels)**2) < n_pixels**2
     geoprocessing.numpy_array_to_raster(
         circle_mask, nodata, (1, -1), (1, 1), None,
@@ -69,6 +69,7 @@ def main():
         raster_path
         for raster_pattern in args.raster_pattern
         for raster_path in glob.glob(raster_pattern)]
+    kernel_lookup_by_n_pixels = {}
     for raster_path in raster_path_list:
         local_working_dir = os.path.join(
             workspace_dir, os.path.basename(
@@ -87,14 +88,18 @@ def main():
                     f'in WGS84 projection or some other issue. Either put '
                     f'radius in same units as raster or pass the --force '
                     f'flag if you think this was a mistake.')
-            kernel_path = os.path.join(
-                local_working_dir, f'kernel_{search_radius}.tif')
             n_pixels = round(search_radius/raster_info['pixel_size'])
-            kernel_task = task_graph.add_task(
-                func=_make_radius_kernel,
-                args=(n_pixels, kernel_path),
-                target_path_list=[kernel_path],
-                task_name=f'make kernel {n_pixels} {kernel_path}')
+            kernel_path = os.path.join(
+                local_working_dir, f'kernel_{n_pixels}.tif')
+            if n_pixels not in kernel_lookup_by_n_pixels:
+                kernel_task = task_graph.add_task(
+                    func=_make_radius_kernel,
+                    args=(n_pixels, kernel_path),
+                    target_path_list=[kernel_path],
+                    task_name=f'make kernel {n_pixels} {kernel_path}')
+                kernel_lookup_by_n_pixels[n_pixels] = (
+                    kernel_path, kernel_task)
+            kernel_path = kernel_lookup_by_n_pixels[n_pixels][0]
             kernel_path_list.append((search_radius, kernel_path))
 
         unique_task = task_graph.add_task(
