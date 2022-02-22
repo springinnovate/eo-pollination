@@ -81,6 +81,7 @@ def main():
         local_working_dir = os.path.join(
             workspace_dir, os.path.basename(
                 os.path.splitext(raster_path)[0]))
+        os.makedirs(local_working_dir, exist_ok=True)
 
         # build kernel for each search radius
         kernel_path_list = []
@@ -96,7 +97,7 @@ def main():
                     f'in WGS84 projection or some other issue. Either put '
                     f'radius in same units as raster or pass the --force '
                     f'flag if you think this was a mistake.')
-            n_pixels = round(search_radius/raster_info['pixel_size'])
+            n_pixels = round(search_radius/raster_info['pixel_size'][0])
             kernel_path = os.path.join(
                 local_working_dir, f'kernel_{n_pixels}.tif')
             if n_pixels not in kernel_lookup_by_n_pixels:
@@ -136,7 +137,7 @@ def main():
                     local_working_dir, f'{os.path.basename(os.path.splitext(mask_raster_path)[0])}_{unique_value}_{search_radius}.tif')
                 convolution_task = task_graph.add_task(
                     func=geoprocessing.convolve_2d,
-                    args=(mask_raster_path, kernel_path,
+                    args=((mask_raster_path, 1), (kernel_path, 1),
                           convolution_raster_path),
                     kwargs={'working_dir': local_working_dir},
                     dependent_task_list=[mask_task, kernel_task],
