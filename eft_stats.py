@@ -20,12 +20,42 @@ logging.basicConfig(
 logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
+NODATA = -1
+
+
+def _add_thresholds(base_raster_path_list, target_threshold_count_raster_path):
+    """Add all the base counting >0 as 1 to target threshold count."""
+    def _add_threshold_op(*base_array_list):
+        result = numpy.full(
+            base_array_list[0].shape, NODATA, dtype=numpy.int32)
+        for base_array in base_array_list:
+            result[base_array > 0] += 1
+        return result
+
+
+def _basename(path):
+    """Return basename without extension."""
+    return os.path.basename(os.path.splitext(path)[0])
+
 
 def _mask_by_value(base_raster_path, mask_value, target_raster_path):
     """Mask base by value to target."""
+    nodata = geoprocessing.get_raster_info(base_raster_path)['nodata'][0]
+    target_nodata = 2
+    def _mask_op(array):
+        """Mask array by mask value but keep nodata."""
+        result = numpy.full(array.shape, target_nodata, dtype=numpy.int8)
+        if nodata is not None:
+            valid_mask = (array != nodata)
+            print('nnot non')
+        else:
+            valid_mask = numpy.isfinite(array)
+        result[valid_mask] = (array[valid_mask] == mask_value).astype(numpy.int8)
+        return result
+
     geoprocessing.raster_calculator(
-        [(base_raster_path, 1)], lambda a: (a == mask_value),
-        target_raster_path, gdal.GDT_Byte, None)
+        [(base_raster_path, 1)], _mask_op,
+        target_raster_path, gdal.GDT_Byte, target_nodata)
 
 
 def _make_radius_kernel(n_pixels, target_kernel_path):
@@ -62,31 +92,31 @@ def main():
         workspace_dir, multiprocessing.cpu_count(), 10.0,
         parallel_mode='thread')
 
+    # TODO: was I going to make stats?
     stats_path = (
         f'eft_stats_{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.csv')
     raster_stats_list = []
-    raster_path_list = [
+    eft_raster_path_list = [
         raster_path
         for raster_pattern in args.raster_pattern
         for raster_path in glob.glob(raster_pattern)]
     kernel_lookup_by_n_pixels = {}
-    for raster_path in raster_path_list:
+    for eft_raster_path in eft_raster_path_list:
         # get unique values
         unique_task = task_graph.add_task(
             func=geoprocessing.get_unique_values,
-            args=((raster_path, 1),),
+            args=((eft_raster_path, 1),),
             store_result=True,
-            task_name=f'unique values for {raster_path}')
+            task_name=f'unique values for {eft_raster_path}')
 
         local_working_dir = os.path.join(
-            workspace_dir, os.path.basename(
-                os.path.splitext(raster_path)[0]))
+            workspace_dir, _basename(eft_raster_path))
         os.makedirs(local_working_dir, exist_ok=True)
 
         # build kernel for each search radius
         kernel_path_list = []
         for search_radius in args.search_radius:
-            raster_info = geoprocessing.get_raster_info(raster_path)
+            raster_info = geoprocessing.get_raster_info(eft_raster_path)
             min_raster_size = raster_info['pixel_size'][0]*min(
                 *raster_info['raster_size'])
             if not args.force and (search_radius > .05*min_raster_size):
@@ -114,9 +144,10 @@ def main():
         # save relevant information so all kernels and unique tasks can be
         # scheduled before masking and convolution starts
         raster_stats_list.append(
-            (raster_path, unique_task, kernel_path_list, local_working_dir))
+            (eft_raster_path, unique_task, kernel_path_list,
+             local_working_dir))
 
-    for raster_path, unique_task, kernel_path_list, local_working_dir in \
+    for eft_raster_path, unique_task, kernel_path_list, local_working_dir in \
             raster_stats_list:
         unique_set = unique_task.get()
         for unique_value in unique_set:
@@ -124,8 +155,9 @@ def main():
             mask_raster_path = os.path.join(
                 local_working_dir, f'{unique_value}.tif')
             mask_task = task_graph.add_task(
+                transient_run=True,
                 func=_mask_by_value,
-                args=(raster_path, unique_value, mask_raster_path),
+                args=(eft_raster_path, unique_value, mask_raster_path),
                 target_path_list=[mask_raster_path],
                 task_name=f'mask {mask_raster_path}')
 
@@ -134,20 +166,33 @@ def main():
             convolution_task_list = []
             for search_radius, kernel_path, kernel_task in kernel_path_list:
                 convolution_raster_path = os.path.join(
-                    local_working_dir, f'{os.path.basename(os.path.splitext(mask_raster_path)[0])}_{unique_value}_{search_radius}.tif')
+                    local_working_dir, f'''{_basename(mask_raster_path)[0]}_{
+                    unique_value}_{search_radius}.tif''')
                 convolution_task = task_graph.add_task(
                     func=geoprocessing.convolve_2d,
                     args=((mask_raster_path, 1), (kernel_path, 1),
                           convolution_raster_path),
-                    kwargs={'working_dir': local_working_dir},
+                    kwargs={
+                        'working_dir': local_working_dir,
+                        'target_datatype': gdal.GDT_Int32,
+                        'target_nodata': NODATA,
+                        },
                     dependent_task_list=[mask_task, kernel_task],
                     target_path_list=[convolution_raster_path],
                     task_name=f'convolve {convolution_raster_path}'
                     )
                 convolution_task_list.append(convolution_task)
                 convolution_raster_list.append(convolution_raster_path)
-            # threshold the convolution so >0 = 1
-        # add all thresholds together
+
+        # add all thresholds together, anything > 1 counts as 1
+        eft_count_raster_path = os.path.join(
+            local_working_dir, f'eft_count_{_basename(eft_raster_path)}')
+        task_graph.add_task(
+            func=_add_thresholds,
+            args=(convolution_raster_list, eft_count_raster_path),
+            target_path_list=[eft_count_raster_path],
+            dependent_task_list=convolution_task_list,
+            task_name=f'adding thresholds for {eft_count_raster_path}')
 
     task_graph.join()
     task_graph.close()
