@@ -31,6 +31,10 @@ def _add_thresholds(base_raster_path_list, target_threshold_count_raster_path):
         for base_array in base_array_list:
             result[base_array > 0] += 1
         return result
+    geoprocessing.raster_calculator(
+        [(path, 1) for path in base_raster_path_list],
+        _add_threshold_op,
+        target_threshold_count_raster_path, gdal.GDT_Int32, NODATA)
 
 
 def _basename(path):
@@ -186,7 +190,7 @@ def main():
 
         # add all thresholds together, anything > 1 counts as 1
         eft_count_raster_path = os.path.join(
-            local_working_dir, f'eft_count_{_basename(eft_raster_path)}')
+            workspace_dir, f'eft_count_{_basename(eft_raster_path)}.tif')
         task_graph.add_task(
             func=_add_thresholds,
             args=(convolution_raster_list, eft_count_raster_path),
